@@ -56,14 +56,15 @@ const LiveTranscriptionDisplay = () => {
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
-  const socketRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const fetchControllerRef = useRef(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [transcription]);
+
   const startTranscription = async () => {
     try {
       if (!apiKey) {
@@ -73,52 +74,63 @@ const LiveTranscriptionDisplay = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
 
-      // Corrected WebSocket initialization
-      socketRef.current = new WebSocket('wss://api.deepgram.com/v1/listen?encoding=linear16&sample_rate=16000');
+      fetchControllerRef.current = new AbortController();
+      const { signal } = fetchControllerRef.current;
 
-      // Set the authorization header using the onopen event
-      socketRef.current.onopen = () => {
-        console.log('WebSocket connection established');
-        socketRef.current.send(JSON.stringify({
-          type: "Authorization",
-          token: apiKey
-        }));
+      const response = await fetch('https://api.deepgram.com/v1/listen?encoding=linear16&sample_rate=16000&channels=1&model=general', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${apiKey}`,
+          'Content-Type': 'audio/raw',
+        },
+        body: new ReadableStream({
+          start(controller) {
+            mediaRecorderRef.current.ondataavailable = (event) => {
+              if (event.data.size > 0) {
+                controller.enqueue(event.data);
+              }
+            };
+            mediaRecorderRef.current.start(250);
+          },
+          cancel() {
+            mediaRecorderRef.current.stop();
+          }
+        }),
+        signal,
+      });
 
-        mediaRecorderRef.current.addEventListener('dataavailable', async (event) => {
-          if (event.data.size > 0 && socketRef.current.readyState === WebSocket.OPEN) {
-            socketRef.current.send(event.data);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const decodedChunk = decoder.decode(value, { stream: true });
+        const jsonLines = decodedChunk.split('\n').filter(line => line.trim() !== '');
+        
+        jsonLines.forEach(jsonLine => {
+          try {
+            const data = JSON.parse(jsonLine);
+            const transcript = data.channel?.alternatives[0]?.transcript;
+            if (transcript) {
+              setTranscription(prev => [...prev, transcript]);
+            }
+          } catch (error) {
+            console.error('Error parsing JSON:', error);
           }
         });
-        mediaRecorderRef.current.start(250);
-      };
-
-      socketRef.current.onmessage = (message) => {
-        const data = JSON.parse(message.data);
-        const transcript = data.channel?.alternatives[0]?.transcript;
-        if (transcript) {
-          setTranscription(prev => [...prev, transcript]);
-        }
-      };
-
-      socketRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('WebSocket connection failed. This could be due to an incorrect API key or insufficient permissions.');
-        stopTranscription();
-      };
-
-      socketRef.current.onclose = (event) => {
-        console.log('WebSocket connection closed:', event);
-        if (!event.wasClean) {
-          setError(`WebSocket connection closed unexpectedly. Code: ${event.code}, Reason: ${event.reason}`);
-        }
-        stopTranscription();
-      };
+      }
 
       setIsTranscribing(true);
       setError(null);
     } catch (error) {
       console.error('Error starting transcription:', error);
       setError(`Error starting transcription: ${error.message}`);
+      stopTranscription();
     }
   };
 
@@ -126,8 +138,8 @@ const LiveTranscriptionDisplay = () => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
     }
-    if (socketRef.current) {
-      socketRef.current.close();
+    if (fetchControllerRef.current) {
+      fetchControllerRef.current.abort();
     }
     setIsTranscribing(false);
   };
