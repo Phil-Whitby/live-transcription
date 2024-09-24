@@ -50,14 +50,14 @@ const Alert = ({ children }) => (
 );
 
 const LiveTranscriptionDisplay = () => {
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [transcription, setTranscription] = useState([]);
   const [fontSize, setFontSize] = useState(18);
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
   const mediaRecorderRef = useRef(null);
-  const fetchControllerRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -65,90 +65,78 @@ const LiveTranscriptionDisplay = () => {
     }
   }, [transcription]);
 
-  const startTranscription = async () => {
+  const startRecording = async () => {
     try {
-      if (!apiKey) {
-        throw new Error("API key is required");
-      }
-
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
 
-      fetchControllerRef.current = new AbortController();
-      const { signal } = fetchControllerRef.current;
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
 
-      const response = await fetch('https://api.deepgram.com/v1/listen?encoding=linear16&sample_rate=16000&channels=1&model=general', {
+      mediaRecorderRef.current.onstop = sendAudioForTranscription;
+
+      audioChunksRef.current = [];
+      mediaRecorderRef.current.start(1000);
+      setIsRecording(true);
+      setError(null);
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      setError(`Error starting recording: ${error.message}`);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  };
+
+  const sendAudioForTranscription = async () => {
+    if (!apiKey) {
+      setError("API key is required");
+      return;
+    }
+
+    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    const formData = new FormData();
+    formData.append('audio', audioBlob);
+
+    try {
+      const response = await fetch('https://api.deepgram.com/v1/listen', {
         method: 'POST',
         headers: {
           'Authorization': `Token ${apiKey}`,
-          'Content-Type': 'audio/raw',
-        },
-        body: new ReadableStream({
-          start(controller) {
-            mediaRecorderRef.current.ondataavailable = (event) => {
-              if (event.data.size > 0) {
-                controller.enqueue(event.data);
-              }
-            };
-            mediaRecorderRef.current.start(250);
-          },
-          cancel() {
-            mediaRecorderRef.current.stop();
-          }
-        }),
-        signal,
+        },  
+        body: formData
       });
 
       if (!response.ok) {
+        const text = await response.text(); // Log full response
+        console.error(`HTTP error! status: ${response.status}, response: ${text}`);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const decodedChunk = decoder.decode(value, { stream: true });
-        const jsonLines = decodedChunk.split('\n').filter(line => line.trim() !== '');
-        
-        jsonLines.forEach(jsonLine => {
-          try {
-            const data = JSON.parse(jsonLine);
-            const transcript = data.channel?.alternatives[0]?.transcript;
-            if (transcript) {
-              setTranscription(prev => [...prev, transcript]);
-            }
-          } catch (error) {
-            console.error('Error parsing JSON:', error);
-          }
-        });
+      const data = await response.json();
+      const transcript = data.results?.channels[0]?.alternatives[0]?.transcript;
+      
+      if (transcript) {
+        setTranscription(prev => [...prev, transcript]);
       }
-
-      setIsTranscribing(true);
-      setError(null);
     } catch (error) {
-      console.error('Error starting transcription:', error);
-      setError(`Error starting transcription: ${error.message}`);
-      stopTranscription();
+      console.error('Error sending audio for transcription:', error);
+      setError(`Error sending audio for transcription: ${error.message}`);
     }
   };
 
-  const stopTranscription = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-    }
-    if (fetchControllerRef.current) {
-      fetchControllerRef.current.abort();
-    }
-    setIsTranscribing(false);
-  };
-
-  const toggleTranscription = () => {
-    if (isTranscribing) {
-      stopTranscription();
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
     } else {
-      startTranscription();
+      startRecording();
     }
   };
 
@@ -162,12 +150,12 @@ const LiveTranscriptionDisplay = () => {
       />
       
       <Button 
-        onClick={toggleTranscription} 
+        onClick={toggleRecording} 
         disabled={!apiKey}
         style={{ marginBottom: '20px', fontSize: '20px', padding: '15px 30px' }}
       >
-        {isTranscribing ? <MicOff style={{ marginRight: '10px' }} /> : <Mic style={{ marginRight: '10px' }} />}
-        {isTranscribing ? 'Stop Transcribing' : 'Start Transcribing'}
+        {isRecording ? <MicOff style={{ marginRight: '10px' }} /> : <Mic style={{ marginRight: '10px' }} />}
+        {isRecording ? 'Stop Recording' : 'Start Recording'}
       </Button>
       
       {error && <Alert>{error}</Alert>}
