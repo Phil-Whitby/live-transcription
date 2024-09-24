@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/live-transcription-app/static/css/main.e6c13ad2.css",
+    "main.js": "/live-transcription-app/static/js/main.04011b2e.js",
+    "index.html": "/live-transcription-app/index.html",
+    "main.e6c13ad2.css.map": "/live-transcription-app/static/css/main.e6c13ad2.css.map",
+    "main.04011b2e.js.map": "/live-transcription-app/static/js/main.04011b2e.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.e6c13ad2.css",
+    "static/js/main.04011b2e.js"
+  ]
+}
