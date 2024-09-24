@@ -64,7 +64,6 @@ const LiveTranscriptionDisplay = () => {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [transcription]);
-
   const startTranscription = async () => {
     try {
       if (!apiKey) {
@@ -74,15 +73,19 @@ const LiveTranscriptionDisplay = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
 
-      socketRef.current = new WebSocket('wss://api.deepgram.com/v1/listen', [
-        'token',
-        apiKey,
-      ]);
+      // Corrected WebSocket initialization
+      socketRef.current = new WebSocket('wss://api.deepgram.com/v1/listen?encoding=linear16&sample_rate=16000');
 
+      // Set the authorization header using the onopen event
       socketRef.current.onopen = () => {
         console.log('WebSocket connection established');
+        socketRef.current.send(JSON.stringify({
+          type: "Authorization",
+          token: apiKey
+        }));
+
         mediaRecorderRef.current.addEventListener('dataavailable', async (event) => {
-          if (event.data.size > 0 && socketRef.current.readyState === 1) {
+          if (event.data.size > 0 && socketRef.current.readyState === WebSocket.OPEN) {
             socketRef.current.send(event.data);
           }
         });
@@ -91,7 +94,7 @@ const LiveTranscriptionDisplay = () => {
 
       socketRef.current.onmessage = (message) => {
         const data = JSON.parse(message.data);
-        const transcript = data.channel.alternatives[0].transcript;
+        const transcript = data.channel?.alternatives[0]?.transcript;
         if (transcript) {
           setTranscription(prev => [...prev, transcript]);
         }
@@ -99,7 +102,15 @@ const LiveTranscriptionDisplay = () => {
 
       socketRef.current.onerror = (error) => {
         console.error('WebSocket error:', error);
-        setError('An error occurred with the transcription service. Please check your API key and try again.');
+        setError('WebSocket connection failed. This could be due to an incorrect API key or insufficient permissions.');
+        stopTranscription();
+      };
+
+      socketRef.current.onclose = (event) => {
+        console.log('WebSocket connection closed:', event);
+        if (!event.wasClean) {
+          setError(`WebSocket connection closed unexpectedly. Code: ${event.code}, Reason: ${event.reason}`);
+        }
         stopTranscription();
       };
 
