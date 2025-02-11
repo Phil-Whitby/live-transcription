@@ -1,202 +1,183 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff } from 'lucide-react';
-import * as Slider from '@radix-ui/react-slider';
+import React, { useState } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
-const Button = ({ children, ...props }) => (
-  <button
-    {...props}
-    style={{
-      padding: '10px 20px',
-      fontSize: '16px',
-      cursor: 'pointer',
-      backgroundColor: '#007bff',
-      color: 'white',
-      border: 'none',
-      borderRadius: '5px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    }}
-  >
-    {children}
-  </button>
-);
-
-const Input = ({ ...props }) => (
-  <input
-    {...props}
-    style={{
-      padding: '10px',
-      fontSize: '16px',
-      width: '100%',
-      marginBottom: '10px',
-      border: '1px solid #ccc',
-      borderRadius: '5px',
-    }}
-  />
-);
-
-const Alert = ({ children }) => (
-  <div style={{ 
-    marginBottom: '20px', 
-    padding: '10px', 
-    backgroundColor: '#e0f0ff', 
-    borderRadius: '5px',
-    border: '1px solid #b8daff',
-    color: '#004085'
-  }}>
-    {children}
-  </div>
-);
-
-const LiveTranscriptionDisplay = () => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcription, setTranscription] = useState([]);
-  const [fontSize, setFontSize] = useState(18);
-  const [apiKey, setApiKey] = useState('');
-  const [error, setError] = useState(null);
-  const scrollRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [transcription]);
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorderRef.current.onstop = sendAudioForTranscription;
-
-      audioChunksRef.current = [];
-      mediaRecorderRef.current.start(1000);
-      setIsRecording(true);
-      setError(null);
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      setError(`Error starting recording: ${error.message}`);
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecording(false);
-  };
-
-  const sendAudioForTranscription = async () => {
-    if (!apiKey) {
-      setError("API key is required");
-      return;
-    }
-
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-    const formData = new FormData();
-    formData.append('audio', audioBlob);
-
-    try {
-      const response = await fetch('https://api.deepgram.com/v1/listen', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Token ${apiKey}`,
-        },  
-        body: formData
-      });
-
-      if (!response.ok) {
-        const text = await response.text(); // Log full response
-        console.error(`HTTP error! status: ${response.status}, response: ${text}`);
-        throw new Error(`HTTP error! status: ${response.status}`);
+const SimpleMarkdown = ({ content }) => {
+  const renderMarkdown = (text) => {
+    if (!text) return null;
+    
+    // Split into lines for processing
+    return text.split('\n').map((line, index) => {
+      // Headers
+      if (line.startsWith('# ')) {
+        return <h1 key={index} className="text-2xl font-bold mb-4">{line.slice(2)}</h1>;
+      }
+      if (line.startsWith('## ')) {
+        return <h2 key={index} className="text-xl font-bold mb-3">{line.slice(3)}</h2>;
+      }
+      if (line.startsWith('### ')) {
+        return <h3 key={index} className="text-lg font-bold mb-2">{line.slice(4)}</h3>;
       }
 
-      const data = await response.json();
-      const transcript = data.results?.channels[0]?.alternatives[0]?.transcript;
+      // Lists
+      if (line.startsWith('- ')) {
+        return (
+          <ul key={index} className="list-disc ml-6 mb-2">
+            <li>{line.slice(2)}</li>
+          </ul>
+        );
+      }
       
-      if (transcript) {
-        setTranscription(prev => [...prev, transcript]);
+      // Bold
+      let processedLine = line;
+      processedLine = processedLine.replace(
+        /\*\*(.*?)\*\*/g,
+        '<strong>$1</strong>'
+      );
+      
+      // Italic
+      processedLine = processedLine.replace(
+        /\*(.*?)\*/g,
+        '<em>$1</em>'
+      );
+
+      // Empty lines
+      if (line.trim() === '') {
+        return <div key={index} className="h-4"></div>;
       }
-    } catch (error) {
-      console.error('Error sending audio for transcription:', error);
-      setError(`Error sending audio for transcription: ${error.message}`);
-    }
+
+      // Regular paragraphs
+      return (
+        <p 
+          key={index} 
+          className="mb-4 leading-relaxed"
+          dangerouslySetInnerHTML={{ __html: processedLine }}
+        />
+      );
+    });
   };
 
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
+  return <div className="markdown-content">{renderMarkdown(content)}</div>;
+};
+
+const QuoteGenerator = () => {
+  const [markdownInput, setMarkdownInput] = useState('');
+  const [showQuote, setShowQuote] = useState(false);
+  const [editedQuote, setEditedQuote] = useState('');
+
+  const handleGenerateQuote = () => {
+    setEditedQuote(markdownInput);
+    setShowQuote(true);
+  };
+
+  const handlePrint = () => {
+    window.print();
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '600px', margin: '0 auto', padding: '20px' }}>
-      <Input
-        type="password"
-        placeholder="Enter your Deepgram API key"
-        value={apiKey}
-        onChange={(e) => setApiKey(e.target.value)}
-      />
+    <div className="w-full max-w-5xl mx-auto p-4">
+      {!showQuote ? (
+        <Card className="mb-4">
+          <CardContent className="pt-6">
+            <div className="space-y-4">
+              <div className="text-sm text-gray-500 mb-2">
+                Supported markdown: Headers (#, ##, ###), Bold (**text**), Italic (*text*), Lists (- item)
+              </div>
+              <Textarea
+                className="min-h-[400px] w-full p-4 font-mono text-base"
+                placeholder="Enter your markdown here..."
+                value={markdownInput}
+                onChange={(e) => setMarkdownInput(e.target.value)}
+              />
+              <Button 
+                className="w-full"
+                onClick={handleGenerateQuote}
+              >
+                Generate Quote
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          <div className="print:hidden space-x-4">
+            <Button 
+              onClick={() => setShowQuote(false)}
+              variant="outline"
+            >
+              Back to Editor
+            </Button>
+            <Button 
+              onClick={handlePrint}
+            >
+              Save as PDF
+            </Button>
+          </div>
+          
+          <div id="quotePrintArea" className="bg-white p-8 shadow-lg min-h-[842px] w-full max-w-[800px] mx-auto">
+            {/* Space for logo */}
+            <div className="h-24 mb-8 border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400">
+              Logo Placeholder
+            </div>
+            
+            {/* Quote content with markdown rendering */}
+            <div className="quote-content">
+              <SimpleMarkdown content={editedQuote} />
+            </div>
+
+            {/* Hidden textarea for editing */}
+            <Textarea
+              className="w-full min-h-[600px] p-4 border-none focus:outline-none resize-none text-base leading-relaxed hidden print:hidden"
+              value={editedQuote}
+              onChange={(e) => setEditedQuote(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
       
-      <Button 
-        onClick={toggleRecording} 
-        disabled={!apiKey}
-        style={{ marginBottom: '20px', fontSize: '20px', padding: '15px 30px' }}
-      >
-        {isRecording ? <MicOff style={{ marginRight: '10px' }} /> : <Mic style={{ marginRight: '10px' }} />}
-        {isRecording ? 'Stop Recording' : 'Start Recording'}
-      </Button>
-      
-      {error && <Alert>{error}</Alert>}
-      
-      <div style={{ width: '100%', display: 'flex', alignItems: 'center', marginBottom: '20px' }}>
-        <span style={{ marginRight: '10px' }}>Font Size:</span>
-        <Slider.Root
-          min={12}
-          max={36}
-          step={2}
-          value={[fontSize]}
-          onValueChange={(value) => setFontSize(value[0])}
-          style={{ width: '200px' }}
-        >
-          <Slider.Track>
-            <Slider.Range />
-          </Slider.Track>
-          <Slider.Thumb />
-        </Slider.Root>
-        <span style={{ marginLeft: '10px' }}>{fontSize}px</span>
-      </div>
-      
-      <div
-        ref={scrollRef}
-        style={{
-          width: '100%',
-          height: '300px',
-          overflowY: 'auto',
-          border: '1px solid #ccc',
-          borderRadius: '5px',
-          padding: '10px',
-          fontSize: `${fontSize}px`,
-          lineHeight: '1.5',
-        }}
-      >
-        {transcription.map((line, index) => (
-          <p key={index} style={{ marginBottom: '10px' }}>{line}</p>
-        ))}
-      </div>
+      <style jsx global>{`
+        @media print {
+          @page {
+            margin: 20mm;
+            size: A4;
+          }
+          
+          body * {
+            visibility: hidden;
+          }
+          
+          #quotePrintArea,
+          #quotePrintArea * {
+            visibility: visible;
+          }
+          
+          #quotePrintArea {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          
+          .quote-content {
+            font-size: 12pt !important;
+            line-height: 1.6 !important;
+          }
+          
+          .print\\:hidden {
+            display: none !important;
+          }
+        }
+        
+        .quote-content {
+          padding: 1rem;
+        }
+      `}</style>
     </div>
   );
 };
 
-export default LiveTranscriptionDisplay;
+export default QuoteGenerator;
